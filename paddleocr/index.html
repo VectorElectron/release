@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PP-OCRv5 纯前端文字识别</title>
+    <script src="https://jsd.onmicrosoft.cn/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
+
+    <link rel="preload" href="./ppocrv5_dict.txt" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="./ppocrv5_det.onnx" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="./ppocrv5_rec.onnx" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="./resize_trans.onnx" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="./bbox_extract.onnx" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="./line_extract.onnx" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="./ctc_decode.onnx" as="fetch" crossorigin="anonymous">
+
+    <style>
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            background: #121212; 
+            color: white; 
+            padding: 0; 
+            margin: 0;
+            height: 100vh;
+            align-items: center;
+        }
+
+        .main-container {
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            background: #1a1a1a;
+            position: relative;
+        }
+
+        header {
+            padding: 15px;
+            text-align: center;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
+            z-index: 10;
+        }
+        h3 { margin: 0; font-size: 1.1em; letter-spacing: 1px; }
+
+        .top-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .canvas-container { 
+            position: relative; 
+            width: 100%; 
+            background: #000;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        #displayImage { width: 100%; height: auto; display: block; border-radius: 4px; }
+
+        .scanner {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 15vh;
+            background: linear-gradient(to bottom, transparent 0%, rgba(0, 123, 255, 0) 50%, rgba(0, 123, 255, 0.5) 90%, #007bff 100%);
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        @keyframes scanMove {
+            from { transform: translateY(-100%); }
+            to { transform: translateY(600%); } 
+        }
+
+        .scanner.active {
+            display: block;
+            animation: scanMove 3s linear infinite;
+        }
+
+        #resultModal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 85%;
+            max-height: 70%;
+            background: rgba(35, 35, 35, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            z-index: 100;
+            flex-direction: column;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .modal-header {
+            padding: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 15px;
+            overflow-y: auto;
+            flex: 1;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+        }
+
+        .result-line {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            word-break: break-all;
+            color: #e0e0e0;
+        }
+
+        .close-btn {
+            background: #444;
+            border: none;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .bottom-controls {
+            background: #252525;
+            padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
+            border-top: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .log-row {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: #00ff00;
+            text-align: center;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 0;
+            border-radius: 4px;
+            min-height: 20px;
+        }
+
+        .btn-group { display: flex; gap: 10px; }
+        .btn-group button, .btn-group label {
+            flex: 1;
+            padding: 14px 0;
+            cursor: pointer;
+            font-weight: bold;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            text-align: center;
+        }
+        button:disabled { background: #444; color: #888; }
+        .btn-run { background: #d9534f !important; } 
+        .btn-example { background: #495057 !important; }
+        #upload { display: none; }
+        #status { font-size: 11px; color: #888; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div class="main-container">
+        <header>
+            <h3>PP-OCRv5 文字识别</h3>
+        </header>
+
+        <div class="top-content">
+            <div class="canvas-container" id="container">
+                <div id="scanner" class="scanner"></div>
+                <img id="displayImage">
+            </div>
+        </div>
+
+        <div id="resultModal">
+            <div class="modal-header">
+                <span style="font-weight: bold">识别结果</span>
+                <button class="close-btn" onclick="closeModal()">关闭</button>
+            </div>
+            <div class="modal-body" id="modalContent">
+            </div>
+        </div>
+
+        <div class="bottom-controls">
+            <div id="status">等待引擎加载...</div>
+
+            <div class="log-row" id="metrics-line">
+                Ready
+            </div>
+
+            <div class="btn-group">
+                <button class="btn-example" id="exampleBtn">示例</button>
+                <label for="upload">上传</label>
+                <input type="file" id="upload" accept="image/*">
+                <button class="btn-run" id="runBtn" disabled>检测</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const workerScript = `
+        importScripts('https://jsd.onmicrosoft.cn/npm/onnxruntime-web@1.19.0/dist/ort.min.js');
+        ort.env.wasm.wasmPaths = 'https://jsd.onmicrosoft.cn/npm/onnxruntime-web@1.19.0/dist/';
+        
+        let recSession, ctcSession, lut;
+
+        self.onmessage = async (e) => {
+            const { type, data } = e.data;
+            
+            if (type === 'init') {
+                const { recBuffer, ctcBuffer, dict } = data;
+                lut = dict;
+                const opt = { executionProviders: ['wasm'] };
+                try {
+                    [recSession, ctcSession] = await Promise.all([
+                        ort.InferenceSession.create(recBuffer, opt),
+                        ort.InferenceSession.create(ctcBuffer, opt)
+                    ]);
+                    self.postMessage({ type: 'ready' });
+                } catch (err) {
+                    self.postMessage({ type: 'error', error: 'Worker初始化失败: ' + err.message });
+                }
+            } 
+            
+            else if (type === 'predict') {
+                const { id, slicedData, dims } = data;
+                try {
+                    const tensor = new ort.Tensor('float32', slicedData, dims);
+                    const recOut = await recSession.run({ 'x': tensor });
+                    const line = recOut[recSession.outputNames[0]];
+                    const [batch, L, D] = line.dims;
+
+                    const ctcOut = await ctcSession.run({ 'x': new ort.Tensor('float32', line.data, [L, D]) });
+                    const cont = ctcOut[ctcSession.outputNames[0]].data;
+                    const prob = ctcOut[ctcSession.outputNames[1]].data;
+
+                    let text = "";
+                    if (prob > 0.6) {
+                        text = Array.from(cont).map(idx => (idx === 0 ? "" : (lut[idx - 1] || ''))).join('').trim();
+                    }
+                    self.postMessage({ type: 'result', id, text });
+                } catch (err) {
+                    self.postMessage({ type: 'error', id, error: err.message });
+                }
+            }
+        };
+    `;
+
+    const upload = document.getElementById('upload');
+    const runBtn = document.getElementById('runBtn');
+    const img = document.getElementById('displayImage');
+    const scanner = document.getElementById('scanner');
+    const status = document.getElementById('status');
+    const metricsLine = document.getElementById('metrics-line');
+    const resultModal = document.getElementById('resultModal');
+    const modalContent = document.getElementById('modalContent');
+
+    let sessions = {};
+    let lut = [];
+    let workers = [];
+    const NUM_WORKERS = 4;
+
+    function closeModal() {
+        resultModal.style.display = 'none';
+    }
+
+    async function init() {
+        try {
+            status.innerText = "正在加载字典与识别模型...";
+            const [dictResp, recBuffer, ctcBuffer] = await Promise.all([
+                fetch('./ppocrv5_dict.txt'),
+                fetch('./ppocrv5_rec.onnx').then(r => r.arrayBuffer()),
+                fetch('./ctc_decode.onnx').then(r => r.arrayBuffer())
+            ]);
+
+            const text = await dictResp.text();
+            lut = text.split('\n').concat([' ']);
+            status.innerText = "加载主线程检测模型...";
+
+            const cpuOpt = { executionProviders: ['wasm'] };
+            const detPaths = [
+                './resize_trans.onnx',
+                './ppocrv5_det.onnx',
+                './bbox_extract.onnx',
+                './line_extract.onnx'
+            ];
+            
+            const sessionResults = await Promise.all(detPaths.map(path => ort.InferenceSession.create(path, cpuOpt)));
+            sessions.resize = sessionResults[0];
+            sessions.det = sessionResults[1];
+            sessions.box = sessionResults[2];
+            sessions.extract = sessionResults[3];
+
+            const blob = new Blob([workerScript], { type: 'application/javascript' });
+            const workerUrl = URL.createObjectURL(blob);
+
+            const workerInits = Array.from({ length: NUM_WORKERS }).map((_, i) => {
+                return new Promise((resolve, reject) => {
+                    const w = new Worker(workerUrl);
+                    w.onmessage = (e) => {
+                        if (e.data.type === 'ready') resolve(w);
+                        if (e.data.type === 'error') reject(new Error(e.data.error));
+                    };
+                    const rBuf = recBuffer.slice(0);
+                    const cBuf = ctcBuffer.slice(0);
+                    w.postMessage({
+                        type: 'init',
+                        data: { recBuffer: rBuf, ctcBuffer: cBuf, dict: lut }
+                    }, [rBuf, cBuf]); 
+                });
+            });
+
+            workers = await Promise.all(workerInits);
+            status.innerText = '系统就绪';
+            runBtn.disabled = false;
+        } catch (e) {
+            status.innerText = "初始化失败: " + e.message;
+        }
+    }
+
+    async function runRecognitionParallel(blocks, widths) {
+        const [N, C, H, W_max] = blocks.dims;
+        const widthArr = widths.data;
+        const tasks = [];
+
+        for (let i = 0; i < N; i++) {
+            const w = widthArr[i];
+            const slicedData = new Float32Array(C * H * w);
+            for (let c = 0; c < C; c++) {
+                for (let h = 0; h < H; h++) {
+                    const srcOff = (i * C * H * W_max) + (c * H * W_max) + (h * W_max);
+                    const dstOff = (c * H * w) + (h * w);
+                    slicedData.set(blocks.data.subarray(srcOff, srcOff + w), dstOff);
+                }
+            }
+
+            // 分配给 Worker
+            const workerIdx = i % NUM_WORKERS;
+            tasks.push(new Promise((resolve) => {
+                const handler = (e) => {
+                    if (e.data.type === 'result' && e.data.id === i) {
+                        workers[workerIdx].removeEventListener('message', handler);
+                        resolve(e.data.text);
+                    }
+                };
+                workers[workerIdx].addEventListener('message', handler);
+                workers[workerIdx].postMessage({
+                    type: 'predict',
+                    data: { id: i, slicedData, dims: [1, C, H, w] }
+                }, [slicedData.buffer]); // 使用 Transferable 对象
+            }));
+        }
+
+        return (await Promise.all(tasks)).filter(t => t !== "");
+    }
+
+    async function predict() {
+        if (!img.src || !img.complete) return;
+        
+        status.innerText = "识别中...";
+        metricsLine.innerText = "并行处理中...";
+        closeModal();
+        scanner.classList.remove('active');
+
+        try {
+            const startTotal = performance.now();
+            
+            // --- 图像预处理 ---
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.naturalWidth;
+            tempCanvas.height = img.naturalHeight;
+            const ctx = tempCanvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const imageData = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const rgbData = new Uint8Array(tempCanvas.width * tempCanvas.height * 3);
+            for (let i = 0, j = 0; i < imageData.data.length; i += 4, j += 3) {
+                rgbData[j] = imageData.data[i];
+                rgbData[j + 1] = imageData.data[i + 1];
+                rgbData[j + 2] = imageData.data[i + 2];
+            }
+            const imgU8 = new ort.Tensor('uint8', rgbData, [tempCanvas.height, tempCanvas.width, 3]);
+
+            // --- A. Resize (尊重原著计时 t1) ---
+            const dialVal = 1600;
+            const resResize = await sessions.resize.run({
+                'image': imgU8,
+                'dial': new ort.Tensor('int32', Int32Array.from([dialVal]), [])
+            });
+            // 获取 imgf, half, scale
+            const imgf = resResize.imgf || Object.values(resResize)[0];
+            const half = resResize.half || Object.values(resResize)[1];
+            const scale = resResize.scale || Object.values(resResize)[2];
+            const t1 = performance.now();
+
+            // --- B. Detection (尊重原著计时 t2) ---
+            // 使用 half 进行检测
+            const detOut = await sessions.det.run({ 'x': half });
+            const hot = Object.values(detOut)[0]; 
+            const t2 = performance.now();
+
+            // --- C. Box Extraction (尊重原著计时 t3) ---
+            // 构造 hotimg 输入 [H, W]
+            const hotImg = new ort.Tensor('float32', hot.data, [hot.dims[2], hot.dims[3]]);
+            const boxOut = await sessions.box.run({
+                'hotimg': hotImg, 
+                'scale': scale, // 新流程需要 scale
+                'thr': new ort.Tensor('float32', [0.3]),
+                'boxthr': new ort.Tensor('float32', [0.7]),
+                'sizethr': new ort.Tensor('float32', [3.0]),
+                'mar': new ort.Tensor('float32', [0.5]), // 尊重 Python 流程设为 0.5
+                'maxn': new ort.Tensor('int32', [100])
+            });
+            const boxes = Object.values(boxOut)[0];
+            const t3 = performance.now();
+
+            if (boxes.dims[0] === 0) {
+                metricsLine.innerText = "未发现文字";
+                status.innerText = "完成";
+                return;
+            }
+
+            // --- 交互：启动扫描动画 ---
+            void scanner.offsetWidth; // 触发重绘
+            scanner.classList.add('active');
+
+            // --- D. Line Extraction & Parallel Recognition ---
+            // 构造 x 输入 [C, H, W]
+            const imgf0 = new ort.Tensor('float32', imgf.data, [imgf.dims[1], imgf.dims[2], imgf.dims[3]]);
+            const extractOut = await sessions.extract.run({ 
+                'x': imgf0, 
+                'boxes': boxes, 
+                'scale': scale // 新流程需要 scale
+            });
+            const blocks = extractOut.blocks || Object.values(extractOut)[0];
+            const widths = extractOut.widths || Object.values(extractOut)[1];
+            
+            // 调用并行识别逻辑
+            const results = await runRecognitionParallel(blocks, widths);
+            
+            // --- 交互：关闭扫描动画 ---
+            scanner.classList.remove('active');
+            const tEnd = performance.now();
+
+            // --- 计时显示 ---
+            metricsLine.innerText = `Det:${(t2-t1).toFixed(0)}ms | Box:${(t3-t2).toFixed(0)}ms | Rec:${(tEnd-t3).toFixed(0)}ms | Total:${(tEnd-startTotal).toFixed(0)}ms`;
+            status.innerText = "识别完成";
+            showResults(results);
+
+        } catch (e) {
+            scanner.classList.remove('active');
+            status.innerText = "错误: " + e.message;
+            console.error(e);
+        }
+    }
+
+    function showResults(results) {
+        modalContent.innerHTML = "";
+        if (results.length === 0) {
+            modalContent.innerHTML = '<div class="result-line" style="text-align:center;color:#888">未提取到有效文本</div>';
+        } else {
+            results.forEach(line => {
+                const div = document.createElement('div');
+                div.className = 'result-line';
+                div.innerText = line;
+                modalContent.appendChild(div);
+            });
+        }
+        resultModal.style.display = 'flex';
+    }
+
+    upload.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            img.src = URL.createObjectURL(file);
+            img.onload = () => { status.innerText = "图片已载入"; };
+        }
+    };
+
+    exampleBtn.onclick = () => {
+        img.src = './testimg.png';
+        img.onload = () => { status.innerText = "示例已载入"; };
+    };
+
+    runBtn.onclick = predict;
+    init();
+</script>
+</body>
+</html>
