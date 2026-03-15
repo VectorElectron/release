@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
 
     <link rel="preload" href="https://cdn.jsdelivr.net/gh/VectorElectron/release@main/yolov11/yolov11_dict.txt" as="fetch" crossorigin="anonymous">
-    <link rel="preload" href="https://cdn.jsdelivr.net/gh/VectorElectron/release@main/yolov11/yolov11_one.onnx" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="https://cdn.jsdelivr.net/gh/VectorElectron/release@main/yolov11/yolov11n_one.onnx" as="fetch" crossorigin="anonymous">
 
     <style>
         body { 
@@ -178,7 +178,7 @@
             classNames = text.split('\n').map(line => line.trim()).filter(line => line !== "");
             const gpuOpt = { executionProviders: ['wasm'] };
             status.innerText = "正在初始化端到端引擎...";
-            sessions.full = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/yolov11/yolov11_one.onnx', gpuOpt);
+            sessions.full = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/yolov11/yolov11n_one.onnx', gpuOpt);
 
             status.innerText = "准备就绪";
             runBtn.disabled = false;
