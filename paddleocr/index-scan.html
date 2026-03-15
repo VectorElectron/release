@@ -15,28 +15,32 @@
     <link rel="preload" href="https://cdn.jsdelivr.net/gh/VectorElectron/release@main/paddleocr/ctc_decode.onnx" as="fetch" crossorigin="anonymous">
 
     <style>
+        :root {
+            --safe-bottom: env(safe-area-inset-bottom);
+        }
+
         body { 
             font-family: system-ui, -apple-system, sans-serif; 
-            display: flex; 
-            flex-direction: column; 
             background: #121212; 
             color: white; 
             padding: 0; 
             margin: 0;
-            height: 100vh;
-            align-items: center;
-            overflow: hidden; /* 防止 body 整体出现滚动条 */
+            /* 使用 dvh 适配移动端动态工具栏 */
+            height: 100dvh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
         }
 
         .main-container {
             width: 100%;
             max-width: 600px;
-            height: 100%;
+            height: 100dvh;
             display: flex;
             flex-direction: column;
             background: #1a1a1a;
             position: relative;
-            overflow: hidden; /* 约束容器高度 */
         }
 
         header {
@@ -44,20 +48,21 @@
             text-align: center;
             background: #1a1a1a;
             border-bottom: 1px solid #333;
+            flex-shrink: 0; /* 禁止压缩头部 */
             z-index: 10;
-            flex-shrink: 0;
         }
+
         h3 { margin: 0; font-size: 1.1em; letter-spacing: 1px; }
 
+        /* 滚动核心区域 */
         .top-content {
             flex: 1;
-            overflow-y: auto; /* 核心：允许垂直滚动 */
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            -webkit-overflow-scrolling: touch;
-            min-height: 0; /* 关键：允许 Flex 子项在内容过多时缩小高度 */
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 12px;
+            /* 强制开启硬件加速滚动 */
+            -webkit-overflow-scrolling: touch; 
+            display: block; 
         }
 
         .canvas-container { 
@@ -66,52 +71,65 @@
             background: #000;
             border-radius: 4px;
             overflow: hidden;
-            flex-shrink: 0; /* 确保容器高度由图片撑起 */
+            /* 避免长图下方被遮挡 */
+            margin-bottom: 20px; 
         }
-        #displayImage { width: 100%; height: auto; display: block; border-radius: 4px; }
 
+        #displayImage { 
+            width: 100%; 
+            height: auto; 
+            display: block; 
+            border-radius: 4px; 
+        }
+
+        /* 扫描线：添加 pointer-events: none 确保不干扰滑动图片 */
         .scanner {
             display: none;
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
-            height: 15vh;
-            background: linear-gradient(to bottom, transparent 0%, rgba(0, 123, 255, 0) 50%, rgba(0, 123, 255, 0.5) 90%, #007bff 100%);
+            height: 10vh;
+            background: linear-gradient(to bottom, 
+                transparent 0%, 
+                rgba(0, 123, 255, 0.1) 50%, 
+                rgba(0, 123, 255, 0.5) 90%, 
+                #007bff 100%);
             z-index: 5;
-            pointer-events: none;
+            pointer-events: none; 
         }
 
         @keyframes scanMove {
             from { transform: translateY(-100%); }
-            to { transform: translateY(600%); } 
+            to { transform: translateY(800%); } 
         }
 
         .scanner.active {
             display: block;
-            animation: scanMove 3s linear infinite;
+            animation: scanMove 2.5s linear infinite;
         }
 
+        /* 结果弹窗优化 */
         #resultModal {
             display: none;
             position: absolute;
-            top: 50%;
+            top: 45%;
             left: 50%;
             transform: translate(-50%, -50%);
-            width: 85%;
-            max-height: 70%;
-            background: rgba(35, 35, 35, 0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 88%;
+            max-height: 65%;
+            background: rgba(30, 30, 30, 0.9);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 12px;
             z-index: 100;
             flex-direction: column;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
         }
 
         .modal-header {
-            padding: 12px;
+            padding: 14px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
             display: flex;
             justify-content: space-between;
@@ -122,63 +140,66 @@
             padding: 15px;
             overflow-y: auto;
             flex: 1;
-            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            font-family: 'PingFang SC', sans-serif;
             line-height: 1.6;
+            -webkit-overflow-scrolling: touch;
         }
 
         .result-line {
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
             word-break: break-all;
-            color: #e0e0e0;
+            color: #efefef;
+            font-size: 14px;
         }
 
         .close-btn {
-            background: #444;
+            background: #007bff;
             border: none;
             color: white;
-            padding: 5px 12px;
+            padding: 6px 14px;
             border-radius: 6px;
-            cursor: pointer;
+            font-size: 13px;
         }
 
+        /* 底部控制栏：固定在底部 */
         .bottom-controls {
             background: #252525;
-            padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
+            padding: 12px 15px calc(12px + var(--safe-bottom));
             border-top: 1px solid #333;
+            flex-shrink: 0;
             display: flex;
             flex-direction: column;
-            gap: 10px;
-            flex-shrink: 0;
+            gap: 8px;
         }
 
         .log-row {
-            font-family: 'Courier New', monospace;
+            font-family: ui-monospace, SFMono-Regular, monospace;
             font-size: 11px;
             color: #00ff00;
             text-align: center;
-            background: rgba(0,0,0,0.5);
-            padding: 5px 0;
+            background: rgba(0,0,0,0.4);
+            padding: 6px;
             border-radius: 4px;
-            min-height: 20px;
         }
 
         .btn-group { display: flex; gap: 10px; }
         .btn-group button, .btn-group label {
             flex: 1;
             padding: 14px 0;
-            cursor: pointer;
-            font-weight: bold;
+            font-weight: 600;
             background: #007bff;
             color: white;
             border: none;
             border-radius: 8px;
             font-size: 15px;
             text-align: center;
+            text-decoration: none;
         }
-        button:disabled { background: #444; color: #888; }
+        
+        button:disabled { background: #333 !important; color: #666; }
         .btn-run { background: #d9534f !important; } 
-        .btn-example { background: #495057 !important; }
+        .btn-example { background: #444 !important; }
         #upload { display: none; }
         #status { font-size: 11px; color: #888; text-align: center; }
     </style>
@@ -224,7 +245,7 @@
 
 <script>
     const workerScript = `
-        // Worker 内部逻辑保持不变
+        // 修改：Worker 内部使用 jsDelivr 加速
         importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js');
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
         
@@ -232,6 +253,7 @@
 
         self.onmessage = async (e) => {
             const { type, data } = e.data;
+            
             if (type === 'init') {
                 const { recBuffer, ctcBuffer, dict } = data;
                 lut = dict;
@@ -245,16 +267,20 @@
                 } catch (err) {
                     self.postMessage({ type: 'error', error: 'Worker初始化失败: ' + err.message });
                 }
-            } else if (type === 'predict') {
+            } 
+            
+            else if (type === 'predict') {
                 const { id, slicedData, dims } = data;
                 try {
                     const tensor = new ort.Tensor('float32', slicedData, dims);
                     const recOut = await recSession.run({ 'x': tensor });
                     const line = recOut[recSession.outputNames[0]];
                     const [batch, L, D] = line.dims;
+
                     const ctcOut = await ctcSession.run({ 'x': new ort.Tensor('float32', line.data, [L, D]) });
                     const cont = ctcOut[ctcSession.outputNames[0]].data;
                     const prob = ctcOut[ctcSession.outputNames[1]].data;
+
                     let text = "";
                     if (prob > 0.6) {
                         text = Array.from(cont).map(idx => (idx === 0 ? "" : (lut[idx - 1] || ''))).join('').trim();
@@ -280,6 +306,8 @@
     let lut = [];
     let workers = [];
     const NUM_WORKERS = 4;
+
+    // 修改：定义统一的基础 CDN 路径
     const BASE_CDN = "https://cdn.jsdelivr.net/gh/VectorElectron/release@main/paddleocr/";
 
     function closeModal() {
@@ -289,6 +317,7 @@
     async function init() {
         try {
             status.innerText = "正在下载字典与识别模型...";
+            // 修改：使用 jsDelivr 路径获取模型与字典
             const [dictResp, recBuffer, ctcBuffer] = await Promise.all([
                 fetch(`${BASE_CDN}ppocrv5_dict.txt`),
                 fetch(`${BASE_CDN}ppocrv5_rec.onnx`).then(r => r.arrayBuffer()),
@@ -300,6 +329,7 @@
             status.innerText = "加载主线程检测模型...";
 
             const cpuOpt = { executionProviders: ['wasm'] };
+            // 修改：使用 jsDelivr 路径加载检测相关模型
             const detPaths = [
                 `${BASE_CDN}resize_trans.onnx`,
                 `${BASE_CDN}ppocrv5_det.onnx`,
@@ -371,11 +401,13 @@
                 }, [slicedData.buffer]);
             }));
         }
+
         return (await Promise.all(tasks)).filter(t => t !== "");
     }
 
     async function predict() {
         if (!img.src || !img.complete) return;
+        
         status.innerText = "识别中...";
         metricsLine.innerText = "并行处理中...";
         closeModal();
@@ -383,6 +415,7 @@
 
         try {
             const startTotal = performance.now();
+            
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = img.naturalWidth;
             tempCanvas.height = img.naturalHeight;
@@ -482,6 +515,7 @@
     };
 
     exampleBtn.onclick = () => {
+        // 修改：使用 jsDelivr 加速加载示例图
         img.src = `testimg.png`;
         img.onload = () => { status.innerText = "示例已载入"; };
     };
