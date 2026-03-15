@@ -25,6 +25,7 @@
             margin: 0;
             height: 100vh;
             align-items: center;
+            overflow: hidden; /* 防止 body 整体出现滚动条 */
         }
 
         .main-container {
@@ -35,6 +36,7 @@
             flex-direction: column;
             background: #1a1a1a;
             position: relative;
+            overflow: hidden; /* 约束容器高度 */
         }
 
         header {
@@ -43,17 +45,19 @@
             background: #1a1a1a;
             border-bottom: 1px solid #333;
             z-index: 10;
+            flex-shrink: 0;
         }
         h3 { margin: 0; font-size: 1.1em; letter-spacing: 1px; }
 
         .top-content {
             flex: 1;
-            overflow-y: auto;
+            overflow-y: auto; /* 核心：允许垂直滚动 */
             padding: 10px;
             display: flex;
             flex-direction: column;
             align-items: center;
             -webkit-overflow-scrolling: touch;
+            min-height: 0; /* 关键：允许 Flex 子项在内容过多时缩小高度 */
         }
 
         .canvas-container { 
@@ -62,6 +66,7 @@
             background: #000;
             border-radius: 4px;
             overflow: hidden;
+            flex-shrink: 0; /* 确保容器高度由图片撑起 */
         }
         #displayImage { width: 100%; height: auto; display: block; border-radius: 4px; }
 
@@ -144,6 +149,7 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+            flex-shrink: 0;
         }
 
         .log-row {
@@ -218,7 +224,7 @@
 
 <script>
     const workerScript = `
-        // 修改：Worker 内部使用 jsDelivr 加速
+        // Worker 内部逻辑保持不变
         importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js');
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
         
@@ -226,7 +232,6 @@
 
         self.onmessage = async (e) => {
             const { type, data } = e.data;
-            
             if (type === 'init') {
                 const { recBuffer, ctcBuffer, dict } = data;
                 lut = dict;
@@ -240,20 +245,16 @@
                 } catch (err) {
                     self.postMessage({ type: 'error', error: 'Worker初始化失败: ' + err.message });
                 }
-            } 
-            
-            else if (type === 'predict') {
+            } else if (type === 'predict') {
                 const { id, slicedData, dims } = data;
                 try {
                     const tensor = new ort.Tensor('float32', slicedData, dims);
                     const recOut = await recSession.run({ 'x': tensor });
                     const line = recOut[recSession.outputNames[0]];
                     const [batch, L, D] = line.dims;
-
                     const ctcOut = await ctcSession.run({ 'x': new ort.Tensor('float32', line.data, [L, D]) });
                     const cont = ctcOut[ctcSession.outputNames[0]].data;
                     const prob = ctcOut[ctcSession.outputNames[1]].data;
-
                     let text = "";
                     if (prob > 0.6) {
                         text = Array.from(cont).map(idx => (idx === 0 ? "" : (lut[idx - 1] || ''))).join('').trim();
@@ -279,8 +280,6 @@
     let lut = [];
     let workers = [];
     const NUM_WORKERS = 4;
-
-    // 修改：定义统一的基础 CDN 路径
     const BASE_CDN = "https://cdn.jsdelivr.net/gh/VectorElectron/release@main/paddleocr/";
 
     function closeModal() {
@@ -290,7 +289,6 @@
     async function init() {
         try {
             status.innerText = "正在下载字典与识别模型...";
-            // 修改：使用 jsDelivr 路径获取模型与字典
             const [dictResp, recBuffer, ctcBuffer] = await Promise.all([
                 fetch(`${BASE_CDN}ppocrv5_dict.txt`),
                 fetch(`${BASE_CDN}ppocrv5_rec.onnx`).then(r => r.arrayBuffer()),
@@ -302,7 +300,6 @@
             status.innerText = "加载主线程检测模型...";
 
             const cpuOpt = { executionProviders: ['wasm'] };
-            // 修改：使用 jsDelivr 路径加载检测相关模型
             const detPaths = [
                 `${BASE_CDN}resize_trans.onnx`,
                 `${BASE_CDN}ppocrv5_det.onnx`,
@@ -374,13 +371,11 @@
                 }, [slicedData.buffer]);
             }));
         }
-
         return (await Promise.all(tasks)).filter(t => t !== "");
     }
 
     async function predict() {
         if (!img.src || !img.complete) return;
-        
         status.innerText = "识别中...";
         metricsLine.innerText = "并行处理中...";
         closeModal();
@@ -388,7 +383,6 @@
 
         try {
             const startTotal = performance.now();
-            
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = img.naturalWidth;
             tempCanvas.height = img.naturalHeight;
@@ -488,7 +482,6 @@
     };
 
     exampleBtn.onclick = () => {
-        // 修改：使用 jsDelivr 加速加载示例图
         img.src = `testimg.png`;
         img.onload = () => { status.innerText = "示例已载入"; };
     };
