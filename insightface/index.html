@@ -3,45 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SCRFD 106点人脸检测 - 维度修正版</title>
+    <title>人脸检测+特征提取</title>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
     <style>
-        body { font-family: system-ui; background: #121212; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; height: 100vh; }
-        .main-container { width: 100%; max-width: 800px; display: flex; flex-direction: column; height: 100%; background: #1a1a1a; }
-        header { padding: 15px; text-align: center; border-bottom: 1px solid #333; }
-        .top-content { flex: 1; overflow: hidden; position: relative; display: flex; justify-content: center; align-items: center; background: #000; }
-        .canvas-container { position: relative; }
-        #displayImage { max-width: 100%; max-height: 70vh; display: block; }
-        #overlay { position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; }
-        .bottom-controls { background: #252525; padding: 15px; border-top: 1px solid #333; display: flex; flex-direction: column; gap: 10px; }
-        .log-row { font-family: monospace; font-size: 11px; color: #00ff00; text-align: center; background: rgba(0,0,0,0.5); padding: 6px; border-radius: 4px; }
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            background: #121212; 
+            color: white; 
+            padding: 0; 
+            margin: 0;
+            height: 100vh;
+            align-items: center;
+        }
+
+        .main-container {
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            background: #1a1a1a;
+            position: relative;
+        }
+
+        header {
+            padding: 15px;
+            text-align: center;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
+            z-index: 10;
+        }
+        h3 { margin: 0; font-size: 1.1em; letter-spacing: 1px; }
+
+        .top-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            -webkit-overflow-scrolling: touch;
+            background: #000;
+        }
+
+        .canvas-container { 
+            position: relative; 
+            width: 100%; 
+            border-radius: 4px;
+        }
+        #displayImage { width: 100%; height: auto; display: block; }
+        #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+        .bottom-controls {
+            background: #252525;
+            padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
+            border-top: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .log-row {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: #00ff00;
+            text-align: center;
+            background: rgba(0,0,0,0.5);
+            padding: 5px;
+            border-radius: 4px;
+        }
+
         .btn-group { display: flex; gap: 10px; }
-        .btn-group button, .btn-group label { flex: 1; padding: 14px 0; cursor: pointer; font-weight: bold; background: #007bff; color: white; border: none; border-radius: 8px; text-align: center; font-size: 14px; }
-        button:disabled { background: #444; }
+        .btn-group button, .btn-group label {
+            flex: 1;
+            padding: 14px 0;
+            cursor: pointer;
+            font-weight: bold;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            text-align: center;
+        }
+        button:disabled { background: #444; color: #888; }
+        .btn-example { background: #495057 !important; }
+        .btn-run { background: #28a745 !important; } 
+        
         #upload { display: none; }
+        #status { font-size: 11px; color: #888; text-align: center; }
     </style>
 </head>
 <body>
 
-<div class="main-container">
-    <header><h3>人脸检测 & 106点关键点 (维度修正)</h3></header>
-    <div class="top-content">
-        <div class="canvas-container">
-            <img id="displayImage">
-            <canvas id="overlay"></canvas>
+    <div class="main-container">
+        <header>
+            <h3>SCRFD 106点人脸检测</h3>
+        </header>
+
+        <div class="top-content">
+            <div class="canvas-container" id="container">
+                <img id="displayImage">
+                <canvas id="overlay"></canvas>
+            </div>
+        </div>
+
+        <div class="bottom-controls">
+            <div id="status">正在加载模型...</div>
+
+            <div class="log-row" id="metrics-line">
+                Ready
+            </div>
+
+            <div class="btn-group">
+                <button class="btn-example" id="exampleBtn">示例</button>
+                <label for="upload">上传</label>
+                <input type="file" id="upload" accept="image/*">
+                <button class="btn-run" id="runBtn" disabled>检测</button>
+            </div>
         </div>
     </div>
-    <div class="bottom-controls">
-        <div id="status" style="font-size:12px;color:#888;text-align:center;">模型加载中...</div>
-        <div class="log-row" id="metrics-line">Ready</div>
-        <div class="btn-group">
-            <button id="exampleBtn" style="background:#495057">示例图片</button>
-            <label for="upload">上传</label>
-            <input type="file" id="upload" accept="image/*">
-            <button id="runBtn" disabled style="background:#28a745">检测</button>
-        </div>
-    </div>
-</div>
 
 <script>
     const img = document.getElementById('displayImage');
@@ -49,12 +132,15 @@
     const status = document.getElementById('status');
     const metricsLine = document.getElementById('metrics-line');
     const runBtn = document.getElementById('runBtn');
+    const upload = document.getElementById('upload');
+    const exampleBtn = document.getElementById('exampleBtn');
     
     let sessions = {};
 
     async function init() {
         try {
             const opt = { executionProviders: ['wasm'] };
+            status.innerText = "正在初始化引擎...";
             sessions.res = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_resize.onnx', opt);
             sessions.det = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_500m_bnkps.onnx', opt);
             sessions.cat = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_concat.onnx', opt);
@@ -63,17 +149,18 @@
             sessions.key = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/2d106det.onnx', opt);
             sessions.inv = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/keypoint_inv.onnx', opt);
 
-            status.innerText = "就绪";
+            status.innerText = "准备就绪";
             runBtn.disabled = false;
         } catch (e) {
-            status.innerText = "加载失败: " + e.message;
+            status.innerText = "初始化失败: " + e.message;
         }
     }
 
     async function predict() {
         if (!img.src || !img.complete) return;
-        const tStart = performance.now();
-        status.innerText = "处理中...";
+        
+        status.innerText = "正在推理...";
+        const tStartTotal = performance.now();
 
         try {
             const tempCanvas = document.createElement('canvas');
@@ -91,7 +178,8 @@
 
             const origImgTensor = new ort.Tensor('uint8', rgb, [tempCanvas.height, tempCanvas.width, 3]);
 
-            // 1. Resize
+            // --- 检测阶段 (Detection) ---
+            const tDetStart = performance.now();
             const resOut = await sessions.res.run({
                 'image': origImgTensor,
                 'dial': new ort.Tensor('int32', Int32Array.from([1024]), [])
@@ -99,10 +187,8 @@
             const imgf = resOut[sessions.res.outputNames[0]];
             const scale = resOut[sessions.res.outputNames[1]];
 
-            // 2. Det
             const detOut = await sessions.det.run({ 'input.1': imgf });
             
-            // 3. Concat
             const dNames = sessions.det.outputNames;
             const catInputs = {
                 's8': detOut[dNames[0]], 's16': detOut[dNames[1]], 's32': detOut[dNames[2]],
@@ -113,7 +199,6 @@
             };
             const merged = await sessions.cat.run(catInputs);
 
-            // 4. NMS
             const nmsOut = await sessions.nms.run({
                 'merged_out': merged[sessions.cat.outputNames[0]],
                 'scale': scale,
@@ -124,52 +209,54 @@
 
             const boxes = nmsOut['boxes'];
             const scores = nmsOut['scores'];
-            let pts106_final = null;
+            const tDetEnd = performance.now();
 
-            // 5. Landmark 106 pts
+            // --- 关键点阶段 (Landmarks) ---
+            let pts106_final = null;
+            let tKptTime = 0;
+
             if (scores.dims[0] > 0) {
+                const tKptStart = performance.now();
                 const numFaces = scores.dims[0];
 
-                // A. 对齐
                 const alnOut = await sessions.aln.run({
                     'img': origImgTensor, 
                     'boxes': boxes
                 });
 
-                // B. 关键点预测
                 const keyOut = await sessions.key.run({
                     'data': alnOut[sessions.aln.outputNames[0]]
                 });
 
-                // --- 重要修复：调整 pts_norm 的维度 (Reshape) ---
-                // keyOut 的输出形状是 [numFaces, 212]，需要变为 [numFaces, 106, 2]
                 const ptsRawData = keyOut[sessions.key.outputNames[0]].data;
                 const ptsReshaped = new ort.Tensor(
                     'float32', 
                     Float32Array.from(ptsRawData), 
-                    [numFaces, 106, 2] // 修正维度为 Rank 3
+                    [numFaces, 106, 2]
                 );
 
-                // C. 坐标逆变换
                 const invOut = await sessions.inv.run({
                     'pts_norm': ptsReshaped, 
                     'boxes': boxes
                 });
                 pts106_final = invOut[sessions.inv.outputNames[0]].data;
+                tKptTime = performance.now() - tKptStart;
             }
 
-            metricsLine.innerText = `耗时: ${(performance.now() - tStart).toFixed(0)}ms | 脸数: ${scores.dims[0]}`;
+            metricsLine.innerText = `Det: ${(tDetEnd - tDetStart).toFixed(0)}ms | Kpt: ${tKptTime.toFixed(0)}ms | Faces: ${scores.dims[0]}`;
             render(boxes.data, scores.data, pts106_final);
             status.innerText = "完成";
         } catch (e) {
             console.error(e);
-            status.innerText = "错误: " + e.message;
+            status.innerText = "报错: " + e.message;
         }
     }
 
     function render(boxes, scores, pts106) {
-        canvas.width = img.clientWidth;
-        canvas.height = img.clientHeight;
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.style.left = img.offsetLeft + "px"; 
+
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -178,14 +265,17 @@
 
         for (let i = 0; i < scores.length; i++) {
             if (scores[i] < 0.5) continue;
+            
             const x1 = boxes[i*4] * sx, y1 = boxes[i*4+1] * sy;
             const x2 = boxes[i*4+2] * sx, y2 = boxes[i*4+3] * sy;
+            
+            // 绿色框
             ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 1.5;
             ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
             if (pts106) {
                 ctx.fillStyle = '#ff0000';
-                // pts106_final 的数据量是 numFaces * 106 * 2
                 for (let k = 0; k < 106; k++) {
                     const px = pts106[i*212 + k*2] * sx;
                     const py = pts106[i*212 + k*2 + 1] * sy;
@@ -197,10 +287,30 @@
         }
     }
 
-    document.getElementById('exampleBtn').onclick = () => { img.src = 'gdp.jpg'; };
-    document.getElementById('upload').onchange = (e) => {
+    // 清除画布的通用方法
+    function resetCanvas() {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        metricsLine.innerText = "Ready";
+    }
+
+    upload.onchange = (e) => {
         const file = e.target.files[0];
-        if (file) img.src = URL.createObjectURL(file);
+        if (file) {
+            img.src = URL.createObjectURL(file);
+            img.onload = () => {
+                resetCanvas();
+                status.innerText = "图片已载入";
+            };
+        }
+    };
+
+    exampleBtn.onclick = () => {
+        img.src = 'gdp.jpg'; // 请确保此路径正确
+        img.onload = () => {
+            resetCanvas();
+            status.innerText = "示例已载入";
+        };
     };
 
     runBtn.onclick = predict;
