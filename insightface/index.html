@@ -55,13 +55,13 @@
     async function init() {
         try {
             const opt = { executionProviders: ['wasm'] };
-            sessions.res = await ort.InferenceSession.create('scrfd_resize.onnx', opt);
-            sessions.det = await ort.InferenceSession.create('scrfd_500m_bnkps.onnx', opt);
-            sessions.cat = await ort.InferenceSession.create('scrfd_concat.onnx', opt);
-            sessions.nms = await ort.InferenceSession.create('scrfd_nms.onnx', opt);
-            sessions.aln = await ort.InferenceSession.create('box_aligner.onnx', opt);
-            sessions.key = await ort.InferenceSession.create('2d106det.onnx', opt);
-            sessions.inv = await ort.InferenceSession.create('keypoint_inv.onnx', opt);
+            sessions.res = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_resize.onnx', opt);
+            sessions.det = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_500m_bnkps.onnx', opt);
+            sessions.cat = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_concat.onnx', opt);
+            sessions.nms = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/scrfd_nms.onnx', opt);
+            sessions.aln = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/box_aligner.onnx', opt);
+            sessions.key = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/2d106det.onnx', opt);
+            sessions.inv = await ort.InferenceSession.create('https://cdn.jsdelivr.net/gh/VectorElectron/release@main/insightface/keypoint_inv.onnx', opt);
 
             status.innerText = "就绪";
             runBtn.disabled = false;
