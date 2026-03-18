@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SCRFD 106点人脸检测 - 维度修正版</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
+    <style>
+        body { font-family: system-ui; background: #121212; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; height: 100vh; }
+        .main-container { width: 100%; max-width: 800px; display: flex; flex-direction: column; height: 100%; background: #1a1a1a; }
+        header { padding: 15px; text-align: center; border-bottom: 1px solid #333; }
+        .top-content { flex: 1; overflow: hidden; position: relative; display: flex; justify-content: center; align-items: center; background: #000; }
+        .canvas-container { position: relative; }
+        #displayImage { max-width: 100%; max-height: 70vh; display: block; }
+        #overlay { position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; }
+        .bottom-controls { background: #252525; padding: 15px; border-top: 1px solid #333; display: flex; flex-direction: column; gap: 10px; }
+        .log-row { font-family: monospace; font-size: 11px; color: #00ff00; text-align: center; background: rgba(0,0,0,0.5); padding: 6px; border-radius: 4px; }
+        .btn-group { display: flex; gap: 10px; }
+        .btn-group button, .btn-group label { flex: 1; padding: 14px 0; cursor: pointer; font-weight: bold; background: #007bff; color: white; border: none; border-radius: 8px; text-align: center; font-size: 14px; }
+        button:disabled { background: #444; }
+        #upload { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="main-container">
+    <header><h3>人脸检测 & 106点关键点 (维度修正)</h3></header>
+    <div class="top-content">
+        <div class="canvas-container">
+            <img id="displayImage">
+            <canvas id="overlay"></canvas>
+        </div>
+    </div>
+    <div class="bottom-controls">
+        <div id="status" style="font-size:12px;color:#888;text-align:center;">模型加载中...</div>
+        <div class="log-row" id="metrics-line">Ready</div>
+        <div class="btn-group">
+            <button id="exampleBtn" style="background:#495057">示例图片</button>
+            <label for="upload">上传</label>
+            <input type="file" id="upload" accept="image/*">
+            <button id="runBtn" disabled style="background:#28a745">检测</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const img = document.getElementById('displayImage');
+    const canvas = document.getElementById('overlay');
+    const status = document.getElementById('status');
+    const metricsLine = document.getElementById('metrics-line');
+    const runBtn = document.getElementById('runBtn');
+    
+    let sessions = {};
+
+    async function init() {
+        try {
+            const opt = { executionProviders: ['wasm'] };
+            sessions.res = await ort.InferenceSession.create('scrfd_resize.onnx', opt);
+            sessions.det = await ort.InferenceSession.create('scrfd_500m_bnkps.onnx', opt);
+            sessions.cat = await ort.InferenceSession.create('scrfd_concat.onnx', opt);
+            sessions.nms = await ort.InferenceSession.create('scrfd_nms.onnx', opt);
+            sessions.aln = await ort.InferenceSession.create('box_aligner.onnx', opt);
+            sessions.key = await ort.InferenceSession.create('2d106det.onnx', opt);
+            sessions.inv = await ort.InferenceSession.create('keypoint_inv.onnx', opt);
+
+            status.innerText = "就绪";
+            runBtn.disabled = false;
+        } catch (e) {
+            status.innerText = "加载失败: " + e.message;
+        }
+    }
+
+    async function predict() {
+        if (!img.src || !img.complete) return;
+        const tStart = performance.now();
+        status.innerText = "处理中...";
+
+        try {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.naturalWidth;
+            tempCanvas.height = img.naturalHeight;
+            const tCtx = tempCanvas.getContext('2d');
+            tCtx.drawImage(img, 0, 0);
+            const imageData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const rgb = new Uint8Array(tempCanvas.width * tempCanvas.height * 3);
+            for (let i = 0; i < imageData.data.length / 4; i++) {
+                rgb[i*3] = imageData.data[i*4];
+                rgb[i*3+1] = imageData.data[i*4+1];
+                rgb[i*3+2] = imageData.data[i*4+2];
+            }
+
+            const origImgTensor = new ort.Tensor('uint8', rgb, [tempCanvas.height, tempCanvas.width, 3]);
+
+            // 1. Resize
+            const resOut = await sessions.res.run({
+                'image': origImgTensor,
+                'dial': new ort.Tensor('int32', Int32Array.from([1024]), [])
+            });
+            const imgf = resOut[sessions.res.outputNames[0]];
+            const scale = resOut[sessions.res.outputNames[1]];
+
+            // 2. Det
+            const detOut = await sessions.det.run({ 'input.1': imgf });
+            
+            // 3. Concat
+            const dNames = sessions.det.outputNames;
+            const catInputs = {
+                's8': detOut[dNames[0]], 's16': detOut[dNames[1]], 's32': detOut[dNames[2]],
+                'b8': detOut[dNames[3]], 'b16': detOut[dNames[4]], 'b32': detOut[dNames[5]],
+                'k8': detOut[dNames[6]], 'k16': detOut[dNames[7]], 'k32': detOut[dNames[8]],
+                'fh': new ort.Tensor('int64', BigInt64Array.from([BigInt(imgf.dims[2])]), []),
+                'fw': new ort.Tensor('int64', BigInt64Array.from([BigInt(imgf.dims[3])]), [])
+            };
+            const merged = await sessions.cat.run(catInputs);
+
+            // 4. NMS
+            const nmsOut = await sessions.nms.run({
+                'merged_out': merged[sessions.cat.outputNames[0]],
+                'scale': scale,
+                'conf_thr': new ort.Tensor('float32', Float32Array.from([0.5]), []),
+                'iou_thr': new ort.Tensor('float32', Float32Array.from([0.3]), []),
+                'top_k': new ort.Tensor('int32', Int32Array.from([100]), [])
+            });
+
+            const boxes = nmsOut['boxes'];
+            const scores = nmsOut['scores'];
+            let pts106_final = null;
+
+            // 5. Landmark 106 pts
+            if (scores.dims[0] > 0) {
+                const numFaces = scores.dims[0];
+
+                // A. 对齐
+                const alnOut = await sessions.aln.run({
+                    'img': origImgTensor, 
+                    'boxes': boxes
+                });
+
+                // B. 关键点预测
+                const keyOut = await sessions.key.run({
+                    'data': alnOut[sessions.aln.outputNames[0]]
+                });
+
+                // --- 重要修复：调整 pts_norm 的维度 (Reshape) ---
+                // keyOut 的输出形状是 [numFaces, 212]，需要变为 [numFaces, 106, 2]
+                const ptsRawData = keyOut[sessions.key.outputNames[0]].data;
+                const ptsReshaped = new ort.Tensor(
+                    'float32', 
+                    Float32Array.from(ptsRawData), 
+                    [numFaces, 106, 2] // 修正维度为 Rank 3
+                );
+
+                // C. 坐标逆变换
+                const invOut = await sessions.inv.run({
+                    'pts_norm': ptsReshaped, 
+                    'boxes': boxes
+                });
+                pts106_final = invOut[sessions.inv.outputNames[0]].data;
+            }
+
+            metricsLine.innerText = `耗时: ${(performance.now() - tStart).toFixed(0)}ms | 脸数: ${scores.dims[0]}`;
+            render(boxes.data, scores.data, pts106_final);
+            status.innerText = "完成";
+        } catch (e) {
+            console.error(e);
+            status.innerText = "错误: " + e.message;
+        }
+    }
+
+    function render(boxes, scores, pts106) {
+        canvas.width = img.clientWidth;
+        canvas.height = img.clientHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const sx = canvas.width / img.naturalWidth;
+        const sy = canvas.height / img.naturalHeight;
+
+        for (let i = 0; i < scores.length; i++) {
+            if (scores[i] < 0.5) continue;
+            const x1 = boxes[i*4] * sx, y1 = boxes[i*4+1] * sy;
+            const x2 = boxes[i*4+2] * sx, y2 = boxes[i*4+3] * sy;
+            ctx.strokeStyle = '#00ff00';
+            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+            if (pts106) {
+                ctx.fillStyle = '#ff0000';
+                // pts106_final 的数据量是 numFaces * 106 * 2
+                for (let k = 0; k < 106; k++) {
+                    const px = pts106[i*212 + k*2] * sx;
+                    const py = pts106[i*212 + k*2 + 1] * sy;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+    }
+
+    document.getElementById('exampleBtn').onclick = () => { img.src = 'gdp.jpg'; };
+    document.getElementById('upload').onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) img.src = URL.createObjectURL(file);
+    };
+
+    runBtn.onclick = predict;
+    init();
+</script>
+</body>
+</html>
